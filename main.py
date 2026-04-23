@@ -23,9 +23,18 @@ class StressTestApp(ctk.CTk):
         # Listas de dados protegidas
         self.data_sessao_1 = []
         self.data_sessao_2 = []
-        # listas de contagem de linhas por requisição
+        # listas de contagem de linhas por requisição (mantidas)
         self.counts_sessao_1 = []
         self.counts_sessao_2 = []
+
+        # Contagem e índice da primeira requisição concluída por sessão
+        self.first_count_value_sessao_1 = None
+        self.first_count_req_sessao_1 = None
+        self.first_count_error_sessao_1 = False
+
+        self.first_count_value_sessao_2 = None
+        self.first_count_req_sessao_2 = None
+        self.first_count_error_sessao_2 = False
 
         self.sessao_atual = 1
 
@@ -90,6 +99,12 @@ class StressTestApp(ctk.CTk):
         self.lbl_status = ctk.CTkLabel(self.sidebar, text="Pronto", text_color="gray")
         self.lbl_status.pack(pady=10)
 
+        # Labels que mostram a quantidade de linhas retornadas pela PRIMEIRA requisição de cada sessão e o índice
+        self.lbl_first_count1 = ctk.CTkLabel(self.sidebar, text="Primeira query Sessão 1: -", text_color="white")
+        self.lbl_first_count1.pack(pady=(5,2), padx=20, anchor="w")
+        self.lbl_first_count2 = ctk.CTkLabel(self.sidebar, text="Primeira query Sessão 2: -", text_color="white")
+        self.lbl_first_count2.pack(pady=(2,10), padx=20, anchor="w")
+
         self.main_content = ctk.CTkFrame(self)
         self.main_content.pack(side="right", fill="both", expand=True, padx=10, pady=10)
 
@@ -149,6 +164,7 @@ class StressTestApp(ctk.CTk):
 
         self.render_active_tab()
         self.render_comparativo()
+        self._update_first_count_labels()
 
         if self.is_running:
             # Mantém o loop de 1 em 1 segundo
@@ -167,8 +183,34 @@ class StressTestApp(ctk.CTk):
     def _format_stats_text(self, mn, mx, mean, total_rows=None):
         base = f"Min: {mn:.1f} ms\nMax: {mx:.1f} ms\nMédia: {mean:.1f} ms"
         if total_rows is not None:
-            base += f"\nLinhas lidas: {total_rows}"
+            base += f"\nLinhas lidas (total): {total_rows}"
         return base
+
+    def _update_first_count_labels(self):
+        """Atualiza as labels laterais com a contagem da primeira requisição por sessão e índice ou Erro."""
+        # Sessão 1
+        if self.first_count_value_sessao_1 is None and not self.first_count_error_sessao_1:
+            text1 = "Primeira query Sessão 1: -"
+        else:
+            if self.first_count_error_sessao_1:
+                idx = self.first_count_req_sessao_1 or "?"
+                text1 = f"Primeira query Sessão 1: Erro (req #{idx})"
+            else:
+                idx = self.first_count_req_sessao_1 or "?"
+                text1 = f"Primeira query Sessão 1: {self.first_count_value_sessao_1} (req #{idx})"
+        self.lbl_first_count1.configure(text=text1)
+
+        # Sessão 2
+        if self.first_count_value_sessao_2 is None and not self.first_count_error_sessao_2:
+            text2 = "Primeira query Sessão 2: -"
+        else:
+            if self.first_count_error_sessao_2:
+                idx = self.first_count_req_sessao_2 or "?"
+                text2 = f"Primeira query Sessão 2: Erro (req #{idx})"
+            else:
+                idx = self.first_count_req_sessao_2 or "?"
+                text2 = f"Primeira query Sessão 2: {self.first_count_value_sessao_2} (req #{idx})"
+        self.lbl_first_count2.configure(text=text2)
 
     def render_active_tab(self):
         tab_name = f"Sessão {self.sessao_atual}"
@@ -199,6 +241,8 @@ class StressTestApp(ctk.CTk):
                     color='white', fontsize=9, bbox=dict(facecolor='black', alpha=0.4))
 
         self.canvas[tab_name].draw_idle()
+        # Atualiza labels laterais também
+        self._update_first_count_labels()
 
     def render_comparativo(self):
         ax = self.axs["COMPARATIVO"]
@@ -221,11 +265,11 @@ class StressTestApp(ctk.CTk):
 
         stats_lines = []
         if mn1 is not None:
-            stats_lines.append(f"Antes — Min: {mn1:.1f} ms; Max: {mx1:.1f} ms; Média: {mean1:.1f} ms; Linhas: {total_rows_1}")
+            stats_lines.append(f"Antes — Min: {mn1:.1f} ms; Max: {mx1:.1f} ms; Média: {mean1:.1f} ms; Linhas total: {total_rows_1}")
         else:
             stats_lines.append("Antes — sem dados válidos")
         if mn2 is not None:
-            stats_lines.append(f"Depois — Min: {mn2:.1f} ms; Max: {mx2:.1f} ms; Média: {mean2:.1f} ms; Linhas: {total_rows_2}")
+            stats_lines.append(f"Depois — Min: {mn2:.1f} ms; Max: {mx2:.1f} ms; Média: {mean2:.1f} ms; Linhas total: {total_rows_2}")
         else:
             stats_lines.append("Depois — sem dados válidos")
 
@@ -267,11 +311,14 @@ class StressTestApp(ctk.CTk):
                 color='white', fontsize=9, bbox=dict(facecolor='black', alpha=0.4))
 
         self.canvas["COMPARATIVO"].draw_idle()
+        # Atualiza labels laterais também
+        self._update_first_count_labels()
 
     async def run_stress_test(self, query, total, concur, host, user, password, db):
         """
         Executa as requisições medindo o tempo até que TODOS os resultados sejam lidos.
-        Usa SSCursor + fetchmany para streaming e evitar OOM em grandes retornos.
+        Usa SSCursor + fetchmany para streaming e evita OOM em grandes retornos.
+        Registra também a contagem e o índice da PRIMEIRA requisição concluída por sessão.
         """
         conf = {'host': host, 'user': user, 'password': password, 'db': db, 'port': 3306, 'connect_timeout': 10}
         try:
@@ -280,7 +327,10 @@ class StressTestApp(ctk.CTk):
             target = self.data_sessao_1 if self.sessao_atual == 1 else self.data_sessao_2
             target_counts = self.counts_sessao_1 if self.sessao_atual == 1 else self.counts_sessao_2
 
-            async def task():
+            # lock para evitar condição de corrida ao gravar a primeira contagem
+            first_lock = asyncio.Lock()
+
+            async def task(req_idx):
                 async with sem:
                     if self.stop_event.is_set():
                         return
@@ -302,14 +352,43 @@ class StressTestApp(ctk.CTk):
                         # armazena tempo e contagem
                         target.append(elapsed_ms)
                         target_counts.append(row_count)
+
+                        # grava a contagem e índice da primeira requisição concluída para a sessão atual
+                        async with first_lock:
+                            if self.sessao_atual == 1:
+                                if self.first_count_value_sessao_1 is None and not self.first_count_error_sessao_1:
+                                    self.first_count_value_sessao_1 = row_count
+                                    self.first_count_req_sessao_1 = req_idx
+                                    self.first_count_error_sessao_1 = False
+                                    self.after(0, self._update_first_count_labels)
+                            else:
+                                if self.first_count_value_sessao_2 is None and not self.first_count_error_sessao_2:
+                                    self.first_count_value_sessao_2 = row_count
+                                    self.first_count_req_sessao_2 = req_idx
+                                    self.first_count_error_sessao_2 = False
+                                    self.after(0, self._update_first_count_labels)
+
                     except Exception as exc:
-                        # registre erro como None e 0 linhas lidas
+                        # registre erro e índice da primeira requisição que falhou, se ainda não registrado
                         target.append(None)
                         target_counts.append(0)
-                        # log simples para console
                         print("Erro na task:", exc)
+                        async with first_lock:
+                            if self.sessao_atual == 1:
+                                if self.first_count_value_sessao_1 is None and not self.first_count_error_sessao_1:
+                                    self.first_count_value_sessao_1 = None
+                                    self.first_count_req_sessao_1 = req_idx
+                                    self.first_count_error_sessao_1 = True
+                                    self.after(0, self._update_first_count_labels)
+                            else:
+                                if self.first_count_value_sessao_2 is None and not self.first_count_error_sessao_2:
+                                    self.first_count_value_sessao_2 = None
+                                    self.first_count_req_sessao_2 = req_idx
+                                    self.first_count_error_sessao_2 = True
+                                    self.after(0, self._update_first_count_labels)
 
-            tasks = [task() for _ in range(int(total))]
+            # cria tasks com índice (1-based)
+            tasks = [task(i + 1) for i in range(int(total))]
             for f in asyncio.as_completed(tasks):
                 if self.stop_event.is_set():
                     break
@@ -326,15 +405,22 @@ class StressTestApp(ctk.CTk):
         self.btn_stop.configure(state="disabled")
         self.lbl_status.configure(text="Sessão concluída!", text_color="green")
         self.render_comparativo()
+        self._update_first_count_labels()
 
     def start_test_thread(self):
-        # limpa apenas a sessão atual
+        # limpa apenas a sessão atual (dados e primeira contagem)
         if self.sessao_atual == 1:
             self.data_sessao_1 = []
             self.counts_sessao_1 = []
+            self.first_count_value_sessao_1 = None
+            self.first_count_req_sessao_1 = None
+            self.first_count_error_sessao_1 = False
         else:
             self.data_sessao_2 = []
             self.counts_sessao_2 = []
+            self.first_count_value_sessao_2 = None
+            self.first_count_req_sessao_2 = None
+            self.first_count_error_sessao_2 = False
 
         self.is_running = True
         self.stop_event.clear()
