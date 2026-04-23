@@ -35,20 +35,31 @@ class StressTestApp(ctk.CTk):
 
         ctk.CTkLabel(self.sidebar, text="🚀 COMPARADOR", font=("Roboto", 20, "bold")).pack(pady=15)
 
-        self.seg_control = ctk.CTkSegmentedButton(self.sidebar, values=["Execução 1", "Execução 2"], command=self.trocar_sessao)
+        self.seg_control = ctk.CTkSegmentedButton(
+            self.sidebar,
+            values=["Execução 1", "Execução 2"],
+            command=self.trocar_sessao
+        )
         self.seg_control.set("Execução 1")
         self.seg_control.pack(pady=10, padx=20, fill="x")
 
-        # Duas caixas de texto separadas para as queries de cada execução
-        ctk.CTkLabel(self.sidebar, text="Query Execução 1:").pack(anchor="w", padx=20)
-        self.entry_query1 = ctk.CTkTextbox(self.sidebar, height=80, width=300)
+        # Frame para queries (cada execução tem seu frame)
+        self.frame_query1 = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        ctk.CTkLabel(self.frame_query1, text="Query Execução 1:").pack(anchor="w", padx=0)
+        self.entry_query1 = ctk.CTkTextbox(self.frame_query1, height=80, width=300)
         self.entry_query1.insert("0.0", "SELECT 1")
-        self.entry_query1.pack(pady=5, padx=20)
+        self.entry_query1.pack(pady=5, padx=0)
+        # não empacotar ainda; será mostrado por trocar_sessao
 
-        ctk.CTkLabel(self.sidebar, text="Query Execução 2:").pack(anchor="w", padx=20)
-        self.entry_query2 = ctk.CTkTextbox(self.sidebar, height=80, width=300)
+        self.frame_query2 = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        ctk.CTkLabel(self.frame_query2, text="Query Execução 2:").pack(anchor="w", padx=0)
+        self.entry_query2 = ctk.CTkTextbox(self.frame_query2, height=80, width=300)
         self.entry_query2.insert("0.0", "SELECT 1")
-        self.entry_query2.pack(pady=5, padx=20)
+        self.entry_query2.pack(pady=5, padx=0)
+        # não empacotar ainda; será mostrado por trocar_sessao
+
+        # Mostrar a query da sessão inicial
+        self.frame_query1.pack(pady=(0, 10), padx=20)
 
         self.entry_total = self.create_input("Total Requisições:", "100")
         self.entry_concur = self.create_input("Simultâneas:", "10")
@@ -104,7 +115,22 @@ class StressTestApp(ctk.CTk):
         return el
 
     def trocar_sessao(self, value):
+        # Atualiza sessão atual e mostra/oculta frames de query
         self.sessao_atual = 1 if value == "Execução 1" else 2
+        # Oculta ambos e mostra apenas o correspondente
+        try:
+            self.frame_query1.pack_forget()
+            self.frame_query2.pack_forget()
+        except Exception:
+            pass
+
+        if self.sessao_atual == 1:
+            self.frame_query1.pack(pady=(0, 10), padx=20)
+        else:
+            self.frame_query2.pack(pady=(0, 10), padx=20)
+
+        # Atualiza renderizações imediatas para refletir a mudança
+        self.render_active_tab()
 
     def update_ui_loop(self):
         """Loop central de atualização da interface."""
@@ -147,7 +173,6 @@ class StressTestApp(ctk.CTk):
             mn, mx, mean = self._compute_stats(data)
             if mn is not None:
                 stats_txt = self._format_stats_text(mn, mx, mean)
-                # Coloca as estatísticas no canto superior direito
                 ax.text(0.98, 0.98, stats_txt, transform=ax.transAxes, ha='right', va='top',
                         color='white', bbox=dict(facecolor='black', alpha=0.6), fontsize=9)
 
@@ -186,7 +211,6 @@ class StressTestApp(ctk.CTk):
         else:
             stats_lines.append("Depois — sem dados válidos")
 
-        # Texto de estatísticas no canto superior esquerdo
         stats_txt = "\n".join(stats_lines)
         ax.text(0.02, 0.98, stats_txt, transform=ax.transAxes, ha='left', va='top',
                 color='white', bbox=dict(facecolor='black', alpha=0.6), fontsize=9)
