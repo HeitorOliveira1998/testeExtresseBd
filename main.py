@@ -35,6 +35,7 @@ class StressTestApp(ctk.CTk):
 
         ctk.CTkLabel(self.sidebar, text="🚀 COMPARADOR", font=("Roboto", 20, "bold")).pack(pady=15)
 
+        # Segmented control
         self.seg_control = ctk.CTkSegmentedButton(
             self.sidebar,
             values=["Execução 1", "Execução 2"],
@@ -43,24 +44,28 @@ class StressTestApp(ctk.CTk):
         self.seg_control.set("Execução 1")
         self.seg_control.pack(pady=10, padx=20, fill="x")
 
-        # Frame para queries (cada execução tem seu frame)
-        self.frame_query1 = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        # Frame que fica imediatamente abaixo do segmented control e contém as caixas de query
+        self.frame_queries_container = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        self.frame_queries_container.pack(pady=(0, 10), padx=20, fill="x")
+
+        # Frame para query da execução 1
+        self.frame_query1 = ctk.CTkFrame(self.frame_queries_container, fg_color="transparent")
         ctk.CTkLabel(self.frame_query1, text="Query Execução 1:").pack(anchor="w", padx=0)
         self.entry_query1 = ctk.CTkTextbox(self.frame_query1, height=80, width=300)
         self.entry_query1.insert("0.0", "SELECT 1")
         self.entry_query1.pack(pady=5, padx=0)
-        # não empacotar ainda; será mostrado por trocar_sessao
 
-        self.frame_query2 = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        # Frame para query da execução 2
+        self.frame_query2 = ctk.CTkFrame(self.frame_queries_container, fg_color="transparent")
         ctk.CTkLabel(self.frame_query2, text="Query Execução 2:").pack(anchor="w", padx=0)
         self.entry_query2 = ctk.CTkTextbox(self.frame_query2, height=80, width=300)
         self.entry_query2.insert("0.0", "SELECT 1")
         self.entry_query2.pack(pady=5, padx=0)
-        # não empacotar ainda; será mostrado por trocar_sessao
 
-        # Mostrar a query da sessão inicial
-        self.frame_query1.pack(pady=(0, 10), padx=20)
+        # Inicialmente mostra apenas a query da sessão 1
+        self.frame_query1.pack(fill="x")
 
+        # Restante dos inputs
         self.entry_total = self.create_input("Total Requisições:", "100")
         self.entry_concur = self.create_input("Simultâneas:", "10")
         self.entry_host = self.create_input("Host:", "127.0.0.1")
@@ -115,9 +120,10 @@ class StressTestApp(ctk.CTk):
         return el
 
     def trocar_sessao(self, value):
-        # Atualiza sessão atual e mostra/oculta frames de query
+        # Atualiza sessão atual e mostra/oculta frames de query dentro do container
         self.sessao_atual = 1 if value == "Execução 1" else 2
-        # Oculta ambos e mostra apenas o correspondente
+
+        # Remove ambos e mostra apenas o correspondente
         try:
             self.frame_query1.pack_forget()
             self.frame_query2.pack_forget()
@@ -125,9 +131,9 @@ class StressTestApp(ctk.CTk):
             pass
 
         if self.sessao_atual == 1:
-            self.frame_query1.pack(pady=(0, 10), padx=20)
+            self.frame_query1.pack(fill="x")
         else:
-            self.frame_query2.pack(pady=(0, 10), padx=20)
+            self.frame_query2.pack(fill="x")
 
         # Atualiza renderizações imediatas para refletir a mudança
         self.render_active_tab()
@@ -224,22 +230,29 @@ class StressTestApp(ctk.CTk):
 
         ax.legend()
 
-        # Mostrar as duas queries no comparativo (Antes / Depois)
-        q1 = self.entry_query1.get("0.0", "end").strip()
-        q2 = self.entry_query2.get("0.0", "end").strip()
-        combined = ""
-        if q1:
-            combined += "Antes (Execução 1): " + q1
-        else:
-            combined += "Antes (Execução 1): <vazia>"
-        combined += "\n\n"
-        if q2:
-            combined += "Depois (Execução 2): " + q2
-        else:
-            combined += "Depois (Execução 2): <vazia>"
+        # Mostrar as duas queries no comparativo (Antes / Depois) com quebra de linha e linha tracejada entre elas
+        q1 = self.entry_query1.get("0.0", "end").strip() or "<vazia>"
+        q2 = self.entry_query2.get("0.0", "end").strip() or "<vazia>"
 
-        wrapped = textwrap.fill(combined, width=120)
-        ax.text(0.5, -0.18, wrapped, transform=ax.transAxes, ha='center', va='top',
+        # Quebrar as queries em blocos para exibir separadamente acima e abaixo da linha tracejada
+        wrapped_q1 = textwrap.fill("Antes (Execução 1): " + q1, width=100)
+        wrapped_q2 = textwrap.fill("Depois (Execução 2): " + q2, width=100)
+
+        # Posições relativas (em axes coords) para os textos e a linha tracejada
+        y_top = -0.08   # posição do primeiro bloco de texto
+        y_line = -0.145 # posição da linha tracejada
+        y_bottom = -0.21 # posição do segundo bloco de texto
+
+        # Primeiro bloco (Antes)
+        ax.text(0.5, y_top, wrapped_q1, transform=ax.transAxes, ha='center', va='top',
+                color='white', fontsize=9, bbox=dict(facecolor='black', alpha=0.4))
+
+        # Linha tracejada entre as queries
+        ax.plot([0.05, 0.95], [y_line, y_line], transform=ax.transAxes,
+                color='white', linestyle='--', linewidth=0.8, alpha=0.8)
+
+        # Segundo bloco (Depois)
+        ax.text(0.5, y_bottom, wrapped_q2, transform=ax.transAxes, ha='center', va='top',
                 color='white', fontsize=9, bbox=dict(facecolor='black', alpha=0.4))
 
         self.canvas["COMPARATIVO"].draw_idle()
