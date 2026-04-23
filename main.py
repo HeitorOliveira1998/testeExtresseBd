@@ -8,6 +8,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from tkinter import filedialog, messagebox
 import textwrap
 import os
+import statistics
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -23,7 +24,7 @@ class StressTestApp(ctk.CTk):
         self.data_sessao_1 = []
         self.data_sessao_2 = []
         self.sessao_atual = 1
-        
+
         self.is_running = False
         self.stop_event = threading.Event()
         self.setup_ui()
@@ -79,10 +80,10 @@ class StressTestApp(ctk.CTk):
             ax.set_facecolor('#1e1e1e')
             ax.tick_params(colors='white')
             for spine in ax.spines.values(): spine.set_color('white')
-            
+
             canv = FigureCanvasTkAgg(fig, master=self.tabview.tab(tab))
             canv.get_tk_widget().pack(fill="both", expand=True)
-            
+
             self.figs[tab] = fig; self.axs[tab] = ax; self.canvas[tab] = canv
 
     def create_input(self, label, default, is_text=False):
@@ -107,6 +108,19 @@ class StressTestApp(ctk.CTk):
             # Mantém o loop de 1 em 1 segundo
             self.after(1000, self.update_ui_loop)
 
+    def _compute_stats(self, data):
+        """Retorna (min, max, mean) em ms ignorando zeros e valores inválidos."""
+        valid = [v for v in data if isinstance(v, (int, float)) and v > 0]
+        if not valid:
+            return None, None, None
+        mn = min(valid)
+        mx = max(valid)
+        mean = statistics.mean(valid)
+        return mn, mx, mean
+
+    def _format_stats_text(self, mn, mx, mean):
+        return f"Min: {mn:.1f} ms\nMax: {mx:.1f} ms\nMédia: {mean:.1f} ms"
+
     def render_active_tab(self):
         tab_name = f"Sessão {self.sessao_atual}"
         data = self.data_sessao_1 if self.sessao_atual == 1 else self.data_sessao_2
@@ -115,29 +129,74 @@ class StressTestApp(ctk.CTk):
         ax = self.axs[tab_name]
         ax.clear()
         ax.set_title(f"Monitoramento: {tab_name}", color="white")
+        ax.set_ylabel("Tempo (ms)", color="white")
+        ax.tick_params(colors='white')
+
         if data:
             ax.plot(data, color=color, linewidth=1)
-        self.canvas[tab_name].draw_idle() # draw_idle é mais seguro que draw()
+            mn, mx, mean = self._compute_stats(data)
+            if mn is not None:
+                stats_txt = self._format_stats_text(mn, mx, mean)
+                # Coloca as estatísticas no canto superior direito
+                ax.text(0.98, 0.98, stats_txt, transform=ax.transAxes, ha='right', va='top',
+                        color='white', bbox=dict(facecolor='black', alpha=0.6), fontsize=9)
+
+        # Query como legenda na parte inferior (com quebra de linha)
+        query = self.entry_query.get("0.0", "end").strip()
+        if query:
+            wrapped = textwrap.fill(query, width=120)
+            ax.text(0.5, -0.12, wrapped, transform=ax.transAxes, ha='center', va='top',
+                    color='white', fontsize=9, bbox=dict(facecolor='black', alpha=0.4))
+
+        self.canvas[tab_name].draw_idle()
 
     def render_comparativo(self):
         ax = self.axs["COMPARATIVO"]
         ax.clear()
         ax.set_title("Comparativo: Antes vs Depois", color="white")
-        
+        ax.set_ylabel("Tempo (ms)", color="white")
+        ax.tick_params(colors='white')
+
         if self.data_sessao_1:
             ax.plot(self.data_sessao_1, color="#e74c3c", alpha=0.5, label="Antes")
         if self.data_sessao_2:
             ax.plot(self.data_sessao_2, color="#2ecc71", alpha=0.8, label="Depois")
-        
-        if self.data_sessao_1 and self.data_sessao_2:
-            m1 = sum(self.data_sessao_1)/len(self.data_sessao_1)
-            m2 = sum(self.data_sessao_2)/len(self.data_sessao_2)
-            if m1 > 0:
-                ganho = ((m1 - m2) / m1) * 100
-                txt = f"Ganho: {ganho:.1f}%" if ganho > 0 else f"Perda: {abs(ganho):.1f}%"
-                ax.text(0.5, 0.9, txt, transform=ax.transAxes, ha='center', color='yellow', bbox=dict(facecolor='black', alpha=0.6))
+
+        # Estatísticas separadas
+        mn1, mx1, mean1 = self._compute_stats(self.data_sessao_1)
+        mn2, mx2, mean2 = self._compute_stats(self.data_sessao_2)
+
+        stats_lines = []
+        if mn1 is not None:
+            stats_lines.append(f"Antes — Min: {mn1:.1f} ms; Max: {mx1:.1f} ms; Média: {mean1:.1f} ms")
+        else:
+            stats_lines.append("Antes — sem dados válidos")
+        if mn2 is not None:
+            stats_lines.append(f"Depois — Min: {mn2:.1f} ms; Max: {mx2:.1f} ms; Média: {mean2:.1f} ms")
+        else:
+            stats_lines.append("Depois — sem dados válidos")
+
+        # Texto de estatísticas no canto superior esquerdo
+        stats_txt = "\n".join(stats_lines)
+        ax.text(0.02, 0.98, stats_txt, transform=ax.transAxes, ha='left', va='top',
+                color='white', bbox=dict(facecolor='black', alpha=0.6), fontsize=9)
+
+        # Ganho/perda percentual baseado nas médias (se existirem)
+        if mean1 is not None and mean2 is not None and mean1 > 0:
+            ganho = ((mean1 - mean2) / mean1) * 100
+            txt = f"Ganho: {ganho:.1f}%" if ganho > 0 else f"Perda: {abs(ganho):.1f}%"
+            ax.text(0.5, 0.9, txt, transform=ax.transAxes, ha='center', color='yellow',
+                    bbox=dict(facecolor='black', alpha=0.6))
 
         ax.legend()
+
+        # Query como legenda na parte inferior (com quebra de linha)
+        query = self.entry_query.get("0.0", "end").strip()
+        if query:
+            wrapped = textwrap.fill(query, width=120)
+            ax.text(0.5, -0.12, wrapped, transform=ax.transAxes, ha='center', va='top',
+                    color='white', fontsize=9, bbox=dict(facecolor='black', alpha=0.4))
+
         self.canvas["COMPARATIVO"].draw_idle()
 
     async def run_stress_test(self, query, total, concur, host, user, password, db):
@@ -156,7 +215,8 @@ class StressTestApp(ctk.CTk):
                             async with conn.cursor() as cur:
                                 await cur.execute(query); await cur.fetchone()
                         target.append((time.perf_counter() - start) * 1000)
-                    except: target.append(0)
+                    except:
+                        target.append(0)
 
             tasks = [task() for _ in range(int(total))]
             for f in asyncio.as_completed(tasks):
@@ -165,7 +225,7 @@ class StressTestApp(ctk.CTk):
             pool.close(); await pool.wait_closed()
         except Exception as e:
             self.after(0, lambda: messagebox.showerror("Erro", f"Conexão falhou: {e}"))
-        
+
         self.is_running = False
         self.after(0, self.finalize_ui)
 
@@ -178,7 +238,7 @@ class StressTestApp(ctk.CTk):
     def start_test_thread(self):
         if self.sessao_atual == 1: self.data_sessao_1 = []
         else: self.data_sessao_2 = []
-        
+
         self.is_running = True
         self.stop_event.clear()
         self.btn_start.configure(state="disabled")
@@ -189,7 +249,7 @@ class StressTestApp(ctk.CTk):
                 self.entry_host.get(), self.entry_user.get(), self.entry_pass.get(), self.entry_db.get())
 
         self.update_ui_loop() # Inicia o loop de renderização
-        
+
         def run_loop():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -205,13 +265,13 @@ class StressTestApp(ctk.CTk):
     def save_all_graphs(self):
         file_path = filedialog.asksaveasfilename(defaultextension=".png")
         if not file_path: return
-        
+
         d = os.path.dirname(file_path)
         b = os.path.basename(file_path).replace(".png", "")
-        
-        self.figs["Sessão 1"].savefig(f"{d}/{b}_antes.png", facecolor='#1e1e1e', dpi=150)
-        self.figs["Sessão 2"].savefig(f"{d}/{b}_depois.png", facecolor='#1e1e1e', dpi=150)
-        self.figs["COMPARATIVO"].savefig(f"{d}/{b}_comparativo.png", facecolor='#1e1e1e', dpi=150)
+
+        self.figs["Sessão 1"].savefig(f"{d}/{b}_antes.png", facecolor='#1e1e1e', dpi=150, bbox_inches='tight')
+        self.figs["Sessão 2"].savefig(f"{d}/{b}_depois.png", facecolor='#1e1e1e', dpi=150, bbox_inches='tight')
+        self.figs["COMPARATIVO"].savefig(f"{d}/{b}_comparativo.png", facecolor='#1e1e1e', dpi=150, bbox_inches='tight')
         messagebox.showinfo("Sucesso", "Gráficos exportados com sucesso!")
 
 if __name__ == "__main__":
