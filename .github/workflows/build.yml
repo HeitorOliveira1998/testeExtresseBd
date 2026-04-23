@@ -1,17 +1,17 @@
 name: Compilar Executavel Windows
 
-on: [push] # O GitHub vai compilar sempre que você salvar algo
+on: [push]
 
 jobs:
   build:
-    runs-on: windows-latest # Aqui ele abre uma máquina virtual Windows real
+    runs-on: windows-latest
 
     steps:
     - name: Checkout do codigo
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4 # Atualizado para v4
 
     - name: Instalar Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5 # Atualizado para v5
       with:
         python-version: '3.9'
 
@@ -24,7 +24,7 @@ jobs:
         pyinstaller --noconsole --onefile --collect-all customtkinter main.py
 
     - name: Disponibilizar para Download
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4 # AQUI ESTAVA O ERRO - Atualizado para v4
       with:
         name: Simulador-MySQL-Windows
         path: dist/main.exe
