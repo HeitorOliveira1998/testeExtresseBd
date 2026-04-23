@@ -5,8 +5,9 @@ import threading
 import customtkinter as ctk
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 import textwrap
+import os
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -15,11 +16,13 @@ class StressTestApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("MySQL Stress Test - Real Time Fix")
-        self.geometry("1300x850")
+        self.title("MySQL Optimization Comparator (A/B Test)")
+        self.geometry("1400x900")
 
-        self.tempos = []
-        self.falhas = 0
+        self.data_sessao_1 = []
+        self.data_sessao_2 = []
+        self.sessao_atual = 1
+        
         self.is_running = False
         self.stop_event = threading.Event()
         self.setup_ui()
@@ -28,193 +31,178 @@ class StressTestApp(ctk.CTk):
         self.sidebar = ctk.CTkFrame(self, width=320, corner_radius=0)
         self.sidebar.pack(side="left", fill="y", padx=10, pady=10)
 
-        ctk.CTkLabel(self.sidebar, text="⚙️ CONFIGURAÇÕES", font=("Roboto", 20, "bold")).pack(pady=15)
+        ctk.CTkLabel(self.sidebar, text="🚀 COMPARADOR DE QUERY", font=("Roboto", 20, "bold")).pack(pady=15)
 
-        self.entry_query = self.create_input("Query SQL:", "SELECT 1 + 1", True)
-        self.entry_total = self.create_input("Total de Requisições:", "1000")
-        self.entry_concur = self.create_input("Simultâneas:", "50")
-        self.entry_host = self.create_input("Host MySQL:", "127.0.0.1")
+        self.seg_control = ctk.CTkSegmentedButton(self.sidebar, values=["Execução 1", "Execução 2"],
+                                                 command=self.trocar_sessao)
+        self.seg_control.set("Execução 1")
+        self.seg_control.pack(pady=10, padx=20, fill="x")
+
+        self.entry_query = self.create_input("Query SQL:", "SELECT * FROM tabela -- Query 1", True)
+        self.entry_total = self.create_input("Total de Requisições:", "500")
+        self.entry_concur = self.create_input("Simultâneas:", "20")
+        self.entry_host = self.create_input("Host:", "127.0.0.1")
         self.entry_user = self.create_input("Usuário:", "root")
-        
         self.entry_pass = ctk.CTkEntry(self.sidebar, width=250, placeholder_text="Senha", show="*")
         self.entry_pass.pack(pady=5, padx=20)
-        
-        self.entry_db = self.create_input("Banco de Dados:", "mysql")
+        self.entry_db = self.create_input("Banco:", "mysql")
 
-        self.btn_start = ctk.CTkButton(self.sidebar, text="🔥 INICIAR TESTE", command=self.start_test_thread, fg_color="green", font=("Roboto", 14, "bold"))
-        self.btn_start.pack(pady=(20, 5), padx=20)
+        self.btn_start = ctk.CTkButton(self.sidebar, text="🔥 INICIAR SESSÃO", command=self.start_test_thread, fg_color="green")
+        self.btn_start.pack(pady=10, padx=20)
 
         self.btn_stop = ctk.CTkButton(self.sidebar, text="🛑 PARAR", command=self.stop_test, fg_color="red", state="disabled")
         self.btn_stop.pack(pady=5, padx=20)
 
-        self.btn_save = ctk.CTkButton(self.sidebar, text="💾 SALVAR RELATÓRIO", command=self.save_graph, fg_color="#444444", state="disabled")
+        self.btn_save = ctk.CTkButton(self.sidebar, text="💾 EXPORTAR TODOS OS GRÁFICOS", command=self.save_all_graphs, fg_color="#444444")
         self.btn_save.pack(pady=5, padx=20)
 
-        self.lbl_status = ctk.CTkLabel(self.sidebar, text="Status: Pronto", text_color="gray")
+        self.lbl_status = ctk.CTkLabel(self.sidebar, text="Pronto para Execução 1", text_color="gray")
         self.lbl_status.pack(pady=10)
 
         self.main_content = ctk.CTkFrame(self)
         self.main_content.pack(side="right", fill="both", expand=True, padx=10, pady=10)
-        
-        self.fig = Figure(figsize=(9, 7), dpi=100)
-        self.ax = self.fig.add_subplot(111)
-        self.ax.set_facecolor('#1e1e1e')
-        self.fig.patch.set_facecolor('#1e1e1e')
-        self.canvas = FigureCanvasTkAgg(self.fig, master=self.main_content)
-        self.canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
+
+        self.tabview = ctk.CTkTabview(self.main_content)
+        self.tabview.pack(fill="both", expand=True)
+        self.tabview.add("Sessão 1")
+        self.tabview.add("Sessão 2")
+        self.tabview.add("COMPARATIVO")
+
+        self.setup_plots()
+
+    def setup_plots(self):
+        self.figs = {}; self.canvas = {}; self.axs = {}
+        for tab in ["Sessão 1", "Sessão 2", "COMPARATIVO"]:
+            fig = Figure(figsize=(8, 6), dpi=100)
+            fig.patch.set_facecolor('#1e1e1e')
+            ax = fig.add_subplot(111)
+            ax.set_facecolor('#1e1e1e')
+            ax.tick_params(colors='white')
+            ax.spines['bottom'].set_color('white')
+            ax.spines['top'].set_color('white') 
+            ax.spines['right'].set_color('white')
+            ax.spines['left'].set_color('white')
+            
+            canv = FigureCanvasTkAgg(fig, master=self.tabview.tab(tab))
+            canv.get_tk_widget().pack(fill="both", expand=True)
+            
+            self.figs[tab] = fig; self.axs[tab] = ax; self.canvas[tab] = canv
 
     def create_input(self, label, default, is_text=False):
         ctk.CTkLabel(self.sidebar, text=label).pack(anchor="w", padx=20)
-        if is_text:
-            el = ctk.CTkTextbox(self.sidebar, height=80, width=250)
-            el.insert("0.0", default)
-        else:
-            el = ctk.CTkEntry(self.sidebar, width=250)
-            el.insert(0, default)
+        el = ctk.CTkTextbox(self.sidebar, height=70, width=250) if is_text else ctk.CTkEntry(self.sidebar, width=250)
+        el.insert("0.0" if is_text else 0, default)
         el.pack(pady=5, padx=20)
         return el
 
-    def update_plot(self):
-        """Renderiza o gráfico e as estatísticas. Chamado periodicamente via after()."""
-        if not self.is_running and not self.tempos:
-            return
+    def trocar_sessao(self, value):
+        self.sessao_atual = 1 if value == "Execução 1" else 2
 
-        self.ax.clear()
-        self.ax.set_title("Relatório de Latência MySQL", color="white", pad=30)
+    def update_plots_live(self):
+        if not self.is_running: return
+        tab_name = f"Sessão {self.sessao_atual}"
+        data = self.data_sessao_1 if self.sessao_atual == 1 else self.data_sessao_2
+        color = "#e74c3c" if self.sessao_atual == 1 else "#2ecc71"
+
+        ax = self.axs[tab_name]
+        ax.clear()
+        ax.set_title(f"Performance - {tab_name}", color="white")
+        if data:
+            ax.plot(data, color=color, linewidth=1)
+        self.canvas[tab_name].draw()
         
-        validos = [t for t in self.tempos if t > 0]
+        self.update_comparativo()
+        if self.is_running: self.after(1000, self.update_plots_live)
+
+    def update_comparativo(self):
+        ax = self.axs["COMPARATIVO"]
+        ax.clear()
+        ax.set_title("Antes (Vermelho) vs Depois (Verde)", color="white")
         
-        if self.tempos:
-            # Plotagem principal (dados brutos e tendência)
-            self.ax.plot(self.tempos, color="#3b8ed0", alpha=0.3, linewidth=0.8)
-            if len(self.tempos) > 10:
-                # Média móvel simples
-                suave = [sum(self.tempos[max(0, i-10):i+1])/len(self.tempos[max(0, i-10):i+1]) for i in range(len(self.tempos))]
-                self.ax.plot(suave, color="#5dade2", linewidth=2)
+        if self.data_sessao_1:
+            ax.plot(self.data_sessao_1, color="#e74c3c", alpha=0.5, label="Antes (Sessão 1)")
+        if self.data_sessao_2:
+            ax.plot(self.data_sessao_2, color="#2ecc71", alpha=0.8, label="Depois (Sessão 2)")
+        
+        if self.data_sessao_1 and self.data_sessao_2:
+            m1 = sum(self.data_sessao_1)/len(self.data_sessao_1)
+            m2 = sum(self.data_sessao_2)/len(self.data_sessao_2)
+            ganho = ((m1 - m2) / m1) * 100 if m1 > 0 else 0
+            res_txt = f"Ganho de Performance: {ganho:.1f}%" if ganho > 0 else f"Perda: {abs(ganho):.1f}%"
+            ax.text(0.5, 0.95, res_txt, transform=ax.transAxes, ha='center', color='yellow', fontweight='bold', bbox=dict(facecolor='black', alpha=0.5))
 
-            # Caixa de texto interna com Stats
-            if validos:
-                v_min, v_max, v_avg = min(validos), max(validos), sum(validos)/len(validos)
-                stats_txt = (f"Média: {v_avg:.2f} ms\n"
-                            f"Mínimo: {v_min:.2f} ms\n"
-                            f"Máximo: {v_max:.2f} ms\n"
-                            f"Falhas: {self.falhas}")
-                
-                self.ax.text(0.02, 0.95, stats_txt, transform=self.ax.transAxes, 
-                            verticalalignment='top', bbox=dict(boxstyle='round', facecolor='black', alpha=0.7),
-                            color='white', fontfamily='monospace', fontsize=10)
+        ax.legend(); self.canvas["COMPARATIVO"].draw()
 
-        self.ax.set_xlabel("Requisições Concluídas", color="white")
-        self.ax.set_ylabel("Tempo de Resposta (ms)", color="white")
-        self.ax.tick_params(colors='white')
-        self.ax.grid(True, linestyle='--', alpha=0.1)
-        self.canvas.draw()
+    def save_all_graphs(self):
+        # Abre diálogo para selecionar pasta e nome base
+        file_path = filedialog.asksaveasfilename(
+            title="Salvar relatórios (serão gerados 3 arquivos)",
+            defaultextension=".png",
+            filetypes=[("PNG", "*.png")]
+        )
+        
+        if not file_path: return
 
-        # Continua o loop de atualização se ainda estiver rodando
-        if self.is_running:
-            self.after(1000, self.update_plot)
+        # Separa o caminho e o nome base
+        dirname = os.path.dirname(file_path)
+        basename = os.path.basename(file_path).replace(".png", "")
+
+        try:
+            # Salva os 3 arquivos individualmente
+            self.figs["Sessão 1"].savefig(f"{dirname}/{basename}_antes.png", facecolor='#1e1e1e', dpi=150)
+            self.figs["Sessão 2"].savefig(f"{dirname}/{basename}_depois.png", facecolor='#1e1e1e', dpi=150)
+            self.figs["COMPARATIVO"].savefig(f"{dirname}/{basename}_comparativo.png", facecolor='#1e1e1e', dpi=150)
+            
+            messagebox.showinfo("Sucesso", f"Os 3 gráficos foram salvos em:\n{dirname}")
+        except Exception as e:
+            messagebox.showerror("Erro", f"Falha ao salvar arquivos: {e}")
 
     def stop_test(self):
-        """Sinaliza a parada imediata."""
-        self.stop_event.set()
-        self.is_running = False
-        self.lbl_status.configure(text="🛑 Parada solicitada...", text_color="orange")
+        self.stop_event.set(); self.is_running = False
 
     async def run_stress_test(self, query, total, concur, host, user, password, db):
-        conf = {'host': host, 'user': user, 'password': password, 'db': db, 'port': 3306, 'connect_timeout': 5}
+        conf = {'host': host, 'user': user, 'password': password, 'db': db, 'port': 3306}
         try:
             pool = await aiomysql.create_pool(**conf, minsize=1, maxsize=int(concur))
             sem = asyncio.Semaphore(int(concur))
+            target_list = self.data_sessao_1 if self.sessao_atual == 1 else self.data_sessao_2
 
             async def task():
-                # Check crítico de parada antes de iniciar a task
-                if self.stop_event.is_set():
-                    return
-
                 async with sem:
                     if self.stop_event.is_set(): return
-                    t_start = time.perf_counter()
+                    start = time.perf_counter()
                     try:
                         async with pool.acquire() as conn:
                             async with conn.cursor() as cur:
-                                await cur.execute(query)
-                                await cur.fetchone()
-                        self.tempos.append((time.perf_counter() - t_start) * 1000)
-                    except:
-                        self.falhas += 1
-                        self.tempos.append(0)
+                                await cur.execute(query); await cur.fetchone()
+                        target_list.append((time.perf_counter() - start) * 1000)
+                    except: target_list.append(0)
 
-            # Criar lista de tarefas
             tasks = [task() for _ in range(int(total))]
-            
-            # Executar de forma que possamos interromper o lote
-            for next_task in asyncio.as_completed(tasks):
-                if self.stop_event.is_set():
-                    break
-                await next_task
-
-            pool.close()
-            await pool.wait_closed()
-
+            for f in asyncio.as_completed(tasks):
+                if self.stop_event.is_set(): break
+                await f
+            pool.close(); await pool.wait_closed()
         except Exception as e:
-            self.lbl_status.configure(text=f"❌ Erro: {str(e)[:20]}", text_color="red")
+            self.after(0, lambda: self.lbl_status.configure(text=f"Erro: {str(e)[:25]}", text_color="red"))
         
-        # Finalização da UI (precisa ser via after para ser thread-safe)
+        self.is_running = False
         self.after(0, self.finalize_ui)
 
     def finalize_ui(self):
-        self.is_running = False
-        self.update_plot() # Desenho final
-        self.btn_start.configure(state="normal")
-        self.btn_stop.configure(state="disabled")
-        self.btn_save.configure(state="normal")
-        
-        status_txt = "🛑 Interrompido" if self.stop_event.is_set() else "✅ Concluído"
-        color = "orange" if self.stop_event.is_set() else "green"
-        self.lbl_status.configure(text=status_txt, text_color=color)
+        self.btn_start.configure(state="normal"); self.btn_stop.configure(state="disabled")
+        self.lbl_status.configure(text=f"Finalizado Sessão {self.sessao_atual}", text_color="green")
+        self.update_comparativo()
 
     def start_test_thread(self):
-        # Reset de variáveis
-        self.tempos = []
-        self.falhas = 0
-        self.is_running = True
-        self.stop_event.clear()
-        
-        # Configuração da UI
-        self.btn_start.configure(state="disabled")
-        self.btn_stop.configure(state="normal")
-        self.btn_save.configure(state="disabled")
-        self.lbl_status.configure(text="🚀 Rodando...", text_color="cyan")
-        
-        args = (
-            self.entry_query.get("0.0", "end").strip(),
-            self.entry_total.get(),
-            self.entry_concur.get(),
-            self.entry_host.get(),
-            self.entry_user.get(),
-            self.entry_pass.get(),
-            self.entry_db.get()
-        )
-        
-        # Inicia o ciclo de vida: Gráfico e Thread de Processamento
-        self.update_plot()
-        
-        def start_async_loop():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(self.run_stress_test(*args))
-            loop.close()
-
-        threading.Thread(target=start_async_loop, daemon=True).start()
-
-    def save_graph(self):
-        path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG", "*.png")])
-        if path:
-            # Adiciona a query no rodapé antes de salvar definitivamente
-            query_full = self.entry_query.get("0.0", "end").strip()
-            query_short = textwrap.fill(query_full[:500], width=80)
-            self.fig.text(0.5, 0.01, f"Query: {query_short}", ha='center', color='gray', fontsize=7)
-            self.fig.savefig(path, facecolor=self.fig.get_facecolor(), bbox_inches='tight', dpi=150)
+        if self.sessao_atual == 1: self.data_sessao_1 = []
+        else: self.data_sessao_2 = []
+        self.is_running = True; self.stop_event.clear()
+        self.btn_start.configure(state="disabled"); self.btn_stop.configure(state="normal")
+        args = (self.entry_query.get("0.0", "end").strip(), self.entry_total.get(), self.entry_concur.get(),
+                self.entry_host.get(), self.entry_user.get(), self.entry_pass.get(), self.entry_db.get())
+        self.update_plots_live()
+        threading.Thread(target=lambda: asyncio.run(self.run_stress_test(*args)), daemon=True).start()
 
 if __name__ == "__main__":
     app = StressTestApp()
