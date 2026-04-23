@@ -87,11 +87,16 @@ class StressTestApp(ctk.CTk):
         self.entry_pass.pack(pady=5, padx=20)
         self.entry_db = self.create_input("Banco:", "mysql")
 
+        # Botões principais
         self.btn_start = ctk.CTkButton(self.sidebar, text="🔥 INICIAR", command=self.start_test_thread, fg_color="green")
         self.btn_start.pack(pady=10, padx=20)
 
         self.btn_stop = ctk.CTkButton(self.sidebar, text="🛑 PARAR", command=self.stop_test, fg_color="red", state="disabled")
         self.btn_stop.pack(pady=5, padx=20)
+
+        # Botão limpar (novo)
+        self.btn_clear = ctk.CTkButton(self.sidebar, text="🧹 LIMPAR GRÁFICOS E QUERIES", command=self.clear_all, fg_color="#666666")
+        self.btn_clear.pack(pady=5, padx=20)
 
         self.btn_save = ctk.CTkButton(self.sidebar, text="💾 EXPORTAR 3 GRÁFICOS", command=self.save_all_graphs, fg_color="#444444")
         self.btn_save.pack(pady=5, padx=20)
@@ -446,6 +451,49 @@ class StressTestApp(ctk.CTk):
     def stop_test(self):
         self.stop_event.set()
         self.is_running = False
+
+    def clear_all(self):
+        """Limpa gráficos, dados e queries da interface."""
+        # Se estiver rodando, não permite limpar
+        if self.is_running:
+            messagebox.showwarning("Atenção", "Pare a execução antes de limpar.")
+            return
+
+        # Limpa dados internos
+        self.data_sessao_1 = []
+        self.data_sessao_2 = []
+        self.counts_sessao_1 = []
+        self.counts_sessao_2 = []
+
+        self.first_count_value_sessao_1 = None
+        self.first_count_req_sessao_1 = None
+        self.first_count_error_sessao_1 = False
+
+        self.first_count_value_sessao_2 = None
+        self.first_count_req_sessao_2 = None
+        self.first_count_error_sessao_2 = False
+
+        # Limpa caixas de query
+        try:
+            self.entry_query1.delete("0.0", "end")
+            self.entry_query2.delete("0.0", "end")
+        except Exception:
+            pass
+
+        # Limpa plots (apaga e redesenha vazios)
+        for tab, ax in self.axs.items():
+            ax.clear()
+            ax.set_facecolor('#1e1e1e')
+            ax.tick_params(colors='white')
+            ax.set_title(tab, color="white")
+            for spine in ax.spines.values(): spine.set_color('white')
+            self.figs[tab].tight_layout()
+            self.canvas[tab].draw_idle()
+
+        # Atualiza labels e status
+        self.lbl_status.configure(text="Pronto", text_color="gray")
+        self._update_first_count_labels()
+        self.render_comparativo()
 
     def save_all_graphs(self):
         file_path = filedialog.asksaveasfilename(defaultextension=".png")
