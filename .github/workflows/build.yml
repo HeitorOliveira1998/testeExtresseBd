@@ -1,41 +1,35 @@
-name: Build MySQL Stress Test
+name: Gerar Executavel Portatil
 
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
 
 env:
-  # Resolve o aviso de depreciação forçando o uso do Node 24
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
     runs-on: windows-latest
-
     steps:
-      # Versão v4 já deve suportar o Node 24 conforme atualizações do GitHub
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Instalar Dependencias
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pyinstaller
 
-      - name: Build EXE with PyInstaller
+      - name: Criar EXE
         run: |
-          pyinstaller --noconsole --onefile --name "MySQL_Optimization_Comparator" main.py
+          # O parâmetro --onefile coloca tudo (inclusive aiomysql) dentro de um único .exe
+          pyinstaller --noconsole --onefile --name "Comparador_MySQL" main.py
 
-      - name: Upload Artifact
+      - name: Disponibilizar Arquivo
         uses: actions/upload-artifact@v4
         with:
-          name: MySQL-Comparator-EXE
-          path: dist/MySQL_Optimization_Comparator.exe
+          name: Simulador-MySQL
+          path: dist/Comparador_MySQL.exe
