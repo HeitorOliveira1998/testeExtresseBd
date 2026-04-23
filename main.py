@@ -17,12 +17,16 @@ class StressTestApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("MySQL Optimization Comparator - Fix Edition")
+        self.title("MySQL Optimization Comparator - Full Fetch Edition")
         self.geometry("1400x900")
 
         # Listas de dados protegidas
         self.data_sessao_1 = []
         self.data_sessao_2 = []
+        # listas de contagem de linhas por requisição
+        self.counts_sessao_1 = []
+        self.counts_sessao_2 = []
+
         self.sessao_atual = 1
 
         self.is_running = False
@@ -66,8 +70,8 @@ class StressTestApp(ctk.CTk):
         self.frame_query1.pack(fill="x")
 
         # Restante dos inputs
-        self.entry_total = self.create_input("Total Requisições:", "100")
-        self.entry_concur = self.create_input("Simultâneas:", "10")
+        self.entry_total = self.create_input("Total Requisições:", "10")
+        self.entry_concur = self.create_input("Simultâneas:", "1")
         self.entry_host = self.create_input("Host:", "127.0.0.1")
         self.entry_user = self.create_input("Usuário:", "root")
         self.entry_pass = ctk.CTkEntry(self.sidebar, width=300, placeholder_text="Senha", show="*")
@@ -151,8 +155,8 @@ class StressTestApp(ctk.CTk):
             self.after(1000, self.update_ui_loop)
 
     def _compute_stats(self, data):
-        """Retorna (min, max, mean) em ms ignorando zeros e valores inválidos."""
-        valid = [v for v in data if isinstance(v, (int, float)) and v > 0]
+        """Retorna (min, max, mean) em ms ignorando None e valores inválidos."""
+        valid = [v for v in data if isinstance(v, (int, float)) and v is not None]
         if not valid:
             return None, None, None
         mn = min(valid)
@@ -160,12 +164,16 @@ class StressTestApp(ctk.CTk):
         mean = statistics.mean(valid)
         return mn, mx, mean
 
-    def _format_stats_text(self, mn, mx, mean):
-        return f"Min: {mn:.1f} ms\nMax: {mx:.1f} ms\nMédia: {mean:.1f} ms"
+    def _format_stats_text(self, mn, mx, mean, total_rows=None):
+        base = f"Min: {mn:.1f} ms\nMax: {mx:.1f} ms\nMédia: {mean:.1f} ms"
+        if total_rows is not None:
+            base += f"\nLinhas lidas: {total_rows}"
+        return base
 
     def render_active_tab(self):
         tab_name = f"Sessão {self.sessao_atual}"
         data = self.data_sessao_1 if self.sessao_atual == 1 else self.data_sessao_2
+        counts = self.counts_sessao_1 if self.sessao_atual == 1 else self.counts_sessao_2
         color = "#e74c3c" if self.sessao_atual == 1 else "#2ecc71"
 
         ax = self.axs[tab_name]
@@ -178,7 +186,8 @@ class StressTestApp(ctk.CTk):
             ax.plot(data, color=color, linewidth=1)
             mn, mx, mean = self._compute_stats(data)
             if mn is not None:
-                stats_txt = self._format_stats_text(mn, mx, mean)
+                total_rows = sum([c for c in counts if isinstance(c, int)]) if counts else 0
+                stats_txt = self._format_stats_text(mn, mx, mean, total_rows=total_rows)
                 ax.text(0.98, 0.98, stats_txt, transform=ax.transAxes, ha='right', va='top',
                         color='white', bbox=dict(facecolor='black', alpha=0.6), fontsize=9)
 
@@ -207,13 +216,16 @@ class StressTestApp(ctk.CTk):
         mn1, mx1, mean1 = self._compute_stats(self.data_sessao_1)
         mn2, mx2, mean2 = self._compute_stats(self.data_sessao_2)
 
+        total_rows_1 = sum([c for c in self.counts_sessao_1 if isinstance(c, int)]) if self.counts_sessao_1 else 0
+        total_rows_2 = sum([c for c in self.counts_sessao_2 if isinstance(c, int)]) if self.counts_sessao_2 else 0
+
         stats_lines = []
         if mn1 is not None:
-            stats_lines.append(f"Antes — Min: {mn1:.1f} ms; Max: {mx1:.1f} ms; Média: {mean1:.1f} ms")
+            stats_lines.append(f"Antes — Min: {mn1:.1f} ms; Max: {mx1:.1f} ms; Média: {mean1:.1f} ms; Linhas: {total_rows_1}")
         else:
             stats_lines.append("Antes — sem dados válidos")
         if mn2 is not None:
-            stats_lines.append(f"Depois — Min: {mn2:.1f} ms; Max: {mx2:.1f} ms; Média: {mean2:.1f} ms")
+            stats_lines.append(f"Depois — Min: {mn2:.1f} ms; Max: {mx2:.1f} ms; Média: {mean2:.1f} ms; Linhas: {total_rows_2}")
         else:
             stats_lines.append("Depois — sem dados válidos")
 
@@ -234,7 +246,6 @@ class StressTestApp(ctk.CTk):
         q1 = self.entry_query1.get("0.0", "end").strip() or "<vazia>"
         q2 = self.entry_query2.get("0.0", "end").strip() or "<vazia>"
 
-        # Quebrar as queries em blocos para exibir separadamente acima e abaixo da linha tracejada
         wrapped_q1 = textwrap.fill("Antes (Execução 1): " + q1, width=100)
         wrapped_q2 = textwrap.fill("Depois (Execução 2): " + q2, width=100)
 
@@ -258,27 +269,50 @@ class StressTestApp(ctk.CTk):
         self.canvas["COMPARATIVO"].draw_idle()
 
     async def run_stress_test(self, query, total, concur, host, user, password, db):
+        """
+        Executa as requisições medindo o tempo até que TODOS os resultados sejam lidos.
+        Usa SSCursor + fetchmany para streaming e evitar OOM em grandes retornos.
+        """
         conf = {'host': host, 'user': user, 'password': password, 'db': db, 'port': 3306, 'connect_timeout': 10}
         try:
             pool = await aiomysql.create_pool(**conf, minsize=1, maxsize=int(concur))
             sem = asyncio.Semaphore(int(concur))
             target = self.data_sessao_1 if self.sessao_atual == 1 else self.data_sessao_2
+            target_counts = self.counts_sessao_1 if self.sessao_atual == 1 else self.counts_sessao_2
 
             async def task():
                 async with sem:
-                    if self.stop_event.is_set(): return
-                    start = time.perf_counter()
+                    if self.stop_event.is_set():
+                        return
+                    row_count = 0
                     try:
                         async with pool.acquire() as conn:
-                            async with conn.cursor() as cur:
-                                await cur.execute(query); await cur.fetchone()
-                        target.append((time.perf_counter() - start) * 1000)
-                    except:
-                        target.append(0)
+                            # SSCursor para streaming (não carrega tudo na memória)
+                            async with conn.cursor(aiomysql.SSCursor) as cur:
+                                start = time.perf_counter()
+                                await cur.execute(query)
+                                batch_size = 1000  # ajuste conforme necessidade
+                                while True:
+                                    rows = await cur.fetchmany(batch_size)
+                                    if not rows:
+                                        break
+                                    row_count += len(rows)
+                                    # descartamos os dados lidos para não acumular memória
+                                elapsed_ms = (time.perf_counter() - start) * 1000
+                        # armazena tempo e contagem
+                        target.append(elapsed_ms)
+                        target_counts.append(row_count)
+                    except Exception as exc:
+                        # registre erro como None e 0 linhas lidas
+                        target.append(None)
+                        target_counts.append(0)
+                        # log simples para console
+                        print("Erro na task:", exc)
 
             tasks = [task() for _ in range(int(total))]
             for f in asyncio.as_completed(tasks):
-                if self.stop_event.is_set(): break
+                if self.stop_event.is_set():
+                    break
                 await f
             pool.close(); await pool.wait_closed()
         except Exception as e:
@@ -297,8 +331,10 @@ class StressTestApp(ctk.CTk):
         # limpa apenas a sessão atual
         if self.sessao_atual == 1:
             self.data_sessao_1 = []
+            self.counts_sessao_1 = []
         else:
             self.data_sessao_2 = []
+            self.counts_sessao_2 = []
 
         self.is_running = True
         self.stop_event.clear()
