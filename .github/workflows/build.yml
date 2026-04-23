@@ -1,0 +1,30 @@
+name: Compilar Executavel Windows
+
+on: [push] # O GitHub vai compilar sempre que você salvar algo
+
+jobs:
+  build:
+    runs-on: windows-latest # Aqui ele abre uma máquina virtual Windows real
+
+    steps:
+    - name: Checkout do codigo
+      uses: actions/checkout@v3
+
+    - name: Instalar Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Instalar Dependencias
+      run: |
+        pip install aiomysql customtkinter matplotlib pyinstaller
+
+    - name: Gerar o EXE
+      run: |
+        pyinstaller --noconsole --onefile --collect-all customtkinter main.py
+
+    - name: Disponibilizar para Download
+      uses: actions/upload-artifact@v3
+      with:
+        name: Simulador-MySQL-Windows
+        path: dist/main.exe
