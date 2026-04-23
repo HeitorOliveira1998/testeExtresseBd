@@ -30,7 +30,7 @@ class StressTestApp(ctk.CTk):
         self.setup_ui()
 
     def setup_ui(self):
-        self.sidebar = ctk.CTkFrame(self, width=320, corner_radius=0)
+        self.sidebar = ctk.CTkFrame(self, width=360, corner_radius=0)
         self.sidebar.pack(side="left", fill="y", padx=10, pady=10)
 
         ctk.CTkLabel(self.sidebar, text="🚀 COMPARADOR", font=("Roboto", 20, "bold")).pack(pady=15)
@@ -39,12 +39,22 @@ class StressTestApp(ctk.CTk):
         self.seg_control.set("Execução 1")
         self.seg_control.pack(pady=10, padx=20, fill="x")
 
-        self.entry_query = self.create_input("Query SQL:", "SELECT 1", True)
+        # Duas caixas de texto separadas para as queries de cada execução
+        ctk.CTkLabel(self.sidebar, text="Query Execução 1:").pack(anchor="w", padx=20)
+        self.entry_query1 = ctk.CTkTextbox(self.sidebar, height=80, width=300)
+        self.entry_query1.insert("0.0", "SELECT 1")
+        self.entry_query1.pack(pady=5, padx=20)
+
+        ctk.CTkLabel(self.sidebar, text="Query Execução 2:").pack(anchor="w", padx=20)
+        self.entry_query2 = ctk.CTkTextbox(self.sidebar, height=80, width=300)
+        self.entry_query2.insert("0.0", "SELECT 1")
+        self.entry_query2.pack(pady=5, padx=20)
+
         self.entry_total = self.create_input("Total Requisições:", "100")
         self.entry_concur = self.create_input("Simultâneas:", "10")
         self.entry_host = self.create_input("Host:", "127.0.0.1")
         self.entry_user = self.create_input("Usuário:", "root")
-        self.entry_pass = ctk.CTkEntry(self.sidebar, width=250, placeholder_text="Senha", show="*")
+        self.entry_pass = ctk.CTkEntry(self.sidebar, width=300, placeholder_text="Senha", show="*")
         self.entry_pass.pack(pady=5, padx=20)
         self.entry_db = self.create_input("Banco:", "mysql")
 
@@ -86,10 +96,10 @@ class StressTestApp(ctk.CTk):
 
             self.figs[tab] = fig; self.axs[tab] = ax; self.canvas[tab] = canv
 
-    def create_input(self, label, default, is_text=False):
+    def create_input(self, label, default):
         ctk.CTkLabel(self.sidebar, text=label).pack(anchor="w", padx=20)
-        el = ctk.CTkTextbox(self.sidebar, height=70, width=250) if is_text else ctk.CTkEntry(self.sidebar, width=250)
-        el.insert("0.0" if is_text else 0, default)
+        el = ctk.CTkEntry(self.sidebar, width=300)
+        el.insert(0, default)
         el.pack(pady=5, padx=20)
         return el
 
@@ -141,8 +151,8 @@ class StressTestApp(ctk.CTk):
                 ax.text(0.98, 0.98, stats_txt, transform=ax.transAxes, ha='right', va='top',
                         color='white', bbox=dict(facecolor='black', alpha=0.6), fontsize=9)
 
-        # Query como legenda na parte inferior (com quebra de linha)
-        query = self.entry_query.get("0.0", "end").strip()
+        # Query como legenda na parte inferior (com quebra de linha) — mostra a query da sessão atual
+        query = self.entry_query1.get("0.0", "end").strip() if self.sessao_atual == 1 else self.entry_query2.get("0.0", "end").strip()
         if query:
             wrapped = textwrap.fill(query, width=120)
             ax.text(0.5, -0.12, wrapped, transform=ax.transAxes, ha='center', va='top',
@@ -190,12 +200,23 @@ class StressTestApp(ctk.CTk):
 
         ax.legend()
 
-        # Query como legenda na parte inferior (com quebra de linha)
-        query = self.entry_query.get("0.0", "end").strip()
-        if query:
-            wrapped = textwrap.fill(query, width=120)
-            ax.text(0.5, -0.12, wrapped, transform=ax.transAxes, ha='center', va='top',
-                    color='white', fontsize=9, bbox=dict(facecolor='black', alpha=0.4))
+        # Mostrar as duas queries no comparativo (Antes / Depois)
+        q1 = self.entry_query1.get("0.0", "end").strip()
+        q2 = self.entry_query2.get("0.0", "end").strip()
+        combined = ""
+        if q1:
+            combined += "Antes (Execução 1): " + q1
+        else:
+            combined += "Antes (Execução 1): <vazia>"
+        combined += "\n\n"
+        if q2:
+            combined += "Depois (Execução 2): " + q2
+        else:
+            combined += "Depois (Execução 2): <vazia>"
+
+        wrapped = textwrap.fill(combined, width=120)
+        ax.text(0.5, -0.18, wrapped, transform=ax.transAxes, ha='center', va='top',
+                color='white', fontsize=9, bbox=dict(facecolor='black', alpha=0.4))
 
         self.canvas["COMPARATIVO"].draw_idle()
 
@@ -236,8 +257,11 @@ class StressTestApp(ctk.CTk):
         self.render_comparativo()
 
     def start_test_thread(self):
-        if self.sessao_atual == 1: self.data_sessao_1 = []
-        else: self.data_sessao_2 = []
+        # limpa apenas a sessão atual
+        if self.sessao_atual == 1:
+            self.data_sessao_1 = []
+        else:
+            self.data_sessao_2 = []
 
         self.is_running = True
         self.stop_event.clear()
@@ -245,7 +269,9 @@ class StressTestApp(ctk.CTk):
         self.btn_stop.configure(state="normal")
         self.lbl_status.configure(text="🚀 Testando...", text_color="cyan")
 
-        args = (self.entry_query.get("0.0", "end").strip(), self.entry_total.get(), self.entry_concur.get(),
+        # escolhe a query da sessão atual
+        query = self.entry_query1.get("0.0", "end").strip() if self.sessao_atual == 1 else self.entry_query2.get("0.0", "end").strip()
+        args = (query, self.entry_total.get(), self.entry_concur.get(),
                 self.entry_host.get(), self.entry_user.get(), self.entry_pass.get(), self.entry_db.get())
 
         self.update_ui_loop() # Inicia o loop de renderização
