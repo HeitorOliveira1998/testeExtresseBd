@@ -15,7 +15,7 @@ class StressTestApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("MySQL Stress Test - Visual Report Edition")
+        self.title("MySQL Stress Test - Real Time Fix")
         self.geometry("1300x850")
 
         self.tempos = []
@@ -65,26 +65,34 @@ class StressTestApp(ctk.CTk):
 
     def create_input(self, label, default, is_text=False):
         ctk.CTkLabel(self.sidebar, text=label).pack(anchor="w", padx=20)
-        el = ctk.CTkTextbox(self.sidebar, height=80, width=250) if is_text else ctk.CTkEntry(self.sidebar, width=250)
-        el.insert("0.0" if is_text else 0, default)
+        if is_text:
+            el = ctk.CTkTextbox(self.sidebar, height=80, width=250)
+            el.insert("0.0", default)
+        else:
+            el = ctk.CTkEntry(self.sidebar, width=250)
+            el.insert(0, default)
         el.pack(pady=5, padx=20)
         return el
 
     def update_plot(self):
-        """Atualiza o gráfico e desenha as estatísticas dentro dele."""
+        """Renderiza o gráfico e as estatísticas. Chamado periodicamente via after()."""
+        if not self.is_running and not self.tempos:
+            return
+
         self.ax.clear()
-        self.ax.set_title("Relatório de Latência MySQL", color="white", fontcenter=16, pad=30)
+        self.ax.set_title("Relatório de Latência MySQL", color="white", pad=30)
         
         validos = [t for t in self.tempos if t > 0]
         
         if self.tempos:
-            # Plotagem principal
-            self.ax.plot(self.tempos, color="#3b8ed0", alpha=0.3, linewidth=0.8, label="Bruto")
+            # Plotagem principal (dados brutos e tendência)
+            self.ax.plot(self.tempos, color="#3b8ed0", alpha=0.3, linewidth=0.8)
             if len(self.tempos) > 10:
+                # Média móvel simples
                 suave = [sum(self.tempos[max(0, i-10):i+1])/len(self.tempos[max(0, i-10):i+1]) for i in range(len(self.tempos))]
-                self.ax.plot(suave, color="#5dade2", linewidth=2, label="Tendência (Média Móvel)")
+                self.ax.plot(suave, color="#5dade2", linewidth=2)
 
-            # BLOCO DE TEXTO DENTRO DO GRÁFICO
+            # Caixa de texto interna com Stats
             if validos:
                 v_min, v_max, v_avg = min(validos), max(validos), sum(validos)/len(validos)
                 stats_txt = (f"Média: {v_avg:.2f} ms\n"
@@ -92,82 +100,121 @@ class StressTestApp(ctk.CTk):
                             f"Máximo: {v_max:.2f} ms\n"
                             f"Falhas: {self.falhas}")
                 
-                # Caixa de texto no canto superior esquerdo
                 self.ax.text(0.02, 0.95, stats_txt, transform=self.ax.transAxes, 
                             verticalalignment='top', bbox=dict(boxstyle='round', facecolor='black', alpha=0.7),
                             color='white', fontfamily='monospace', fontsize=10)
-
-                # Query no rodapé do gráfico (apenas quando houver espaço)
-                query_full = self.entry_query.get("0.0", "end").strip()
-                query_short = textwrap.fill(query_full[:500], width=80)
-                self.fig.text(0.5, 0.02, f"Query: {query_short}", ha='center', color='gray', fontsize=8, style='italic')
 
         self.ax.set_xlabel("Requisições Concluídas", color="white")
         self.ax.set_ylabel("Tempo de Resposta (ms)", color="white")
         self.ax.tick_params(colors='white')
         self.ax.grid(True, linestyle='--', alpha=0.1)
-        self.fig.tight_layout(rect=[0, 0.05, 1, 0.95]) # Ajusta margens para caber o rodapé
         self.canvas.draw()
 
-    def update_loop(self):
+        # Continua o loop de atualização se ainda estiver rodando
         if self.is_running:
-            self.update_plot()
-            self.after(1000, self.update_loop)
+            self.after(1000, self.update_plot)
+
+    def stop_test(self):
+        """Sinaliza a parada imediata."""
+        self.stop_event.set()
+        self.is_running = False
+        self.lbl_status.configure(text="🛑 Parada solicitada...", text_color="orange")
 
     async def run_stress_test(self, query, total, concur, host, user, password, db):
-        conf = {'host': host, 'user': user, 'password': password, 'db': db, 'port': 3306}
+        conf = {'host': host, 'user': user, 'password': password, 'db': db, 'port': 3306, 'connect_timeout': 5}
         try:
             pool = await aiomysql.create_pool(**conf, minsize=1, maxsize=int(concur))
             sem = asyncio.Semaphore(int(concur))
 
             async def task():
-                if self.stop_event.is_set(): return
+                # Check crítico de parada antes de iniciar a task
+                if self.stop_event.is_set():
+                    return
+
                 async with sem:
+                    if self.stop_event.is_set(): return
                     t_start = time.perf_counter()
                     try:
                         async with pool.acquire() as conn:
                             async with conn.cursor() as cur:
-                                await cur.execute(query); await cur.fetchone()
+                                await cur.execute(query)
+                                await cur.fetchone()
                         self.tempos.append((time.perf_counter() - t_start) * 1000)
                     except:
                         self.falhas += 1
                         self.tempos.append(0)
 
+            # Criar lista de tarefas
             tasks = [task() for _ in range(int(total))]
-            for f in asyncio.as_completed(tasks):
-                if self.stop_event.is_set(): break
-                await f
             
-            pool.close(); await pool.wait_closed()
-            self.is_running = False
-            self.update_plot() # Refresh final com todos os dados
-            self.btn_save.configure(state="normal")
-            self.lbl_status.configure(text="✅ Concluído!", text_color="green")
+            # Executar de forma que possamos interromper o lote
+            for next_task in asyncio.as_completed(tasks):
+                if self.stop_event.is_set():
+                    break
+                await next_task
 
-        except Exception:
-            self.lbl_status.configure(text="❌ Erro Conexão", text_color="red")
-            self.is_running = False
+            pool.close()
+            await pool.wait_closed()
+
+        except Exception as e:
+            self.lbl_status.configure(text=f"❌ Erro: {str(e)[:20]}", text_color="red")
         
-        self.btn_start.configure(state="normal"); self.btn_stop.configure(state="disabled")
+        # Finalização da UI (precisa ser via after para ser thread-safe)
+        self.after(0, self.finalize_ui)
+
+    def finalize_ui(self):
+        self.is_running = False
+        self.update_plot() # Desenho final
+        self.btn_start.configure(state="normal")
+        self.btn_stop.configure(state="disabled")
+        self.btn_save.configure(state="normal")
+        
+        status_txt = "🛑 Interrompido" if self.stop_event.is_set() else "✅ Concluído"
+        color = "orange" if self.stop_event.is_set() else "green"
+        self.lbl_status.configure(text=status_txt, text_color=color)
+
+    def start_test_thread(self):
+        # Reset de variáveis
+        self.tempos = []
+        self.falhas = 0
+        self.is_running = True
+        self.stop_event.clear()
+        
+        # Configuração da UI
+        self.btn_start.configure(state="disabled")
+        self.btn_stop.configure(state="normal")
+        self.btn_save.configure(state="disabled")
+        self.lbl_status.configure(text="🚀 Rodando...", text_color="cyan")
+        
+        args = (
+            self.entry_query.get("0.0", "end").strip(),
+            self.entry_total.get(),
+            self.entry_concur.get(),
+            self.entry_host.get(),
+            self.entry_user.get(),
+            self.entry_pass.get(),
+            self.entry_db.get()
+        )
+        
+        # Inicia o ciclo de vida: Gráfico e Thread de Processamento
+        self.update_plot()
+        
+        def start_async_loop():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(self.run_stress_test(*args))
+            loop.close()
+
+        threading.Thread(target=start_async_loop, daemon=True).start()
 
     def save_graph(self):
         path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG", "*.png")])
         if path:
+            # Adiciona a query no rodapé antes de salvar definitivamente
+            query_full = self.entry_query.get("0.0", "end").strip()
+            query_short = textwrap.fill(query_full[:500], width=80)
+            self.fig.text(0.5, 0.01, f"Query: {query_short}", ha='center', color='gray', fontsize=7)
             self.fig.savefig(path, facecolor=self.fig.get_facecolor(), bbox_inches='tight', dpi=150)
-
-    def stop_test(self):
-        self.stop_event.set(); self.is_running = False
-
-    def start_test_thread(self):
-        self.tempos = []; self.falhas = 0; self.is_running = True; self.stop_event.clear()
-        self.btn_start.configure(state="disabled"); self.btn_stop.configure(state="normal"); self.btn_save.configure(state="disabled")
-        self.lbl_status.configure(text="🚀 Rodando...", text_color="cyan")
-        
-        args = (self.entry_query.get("0.0", "end").strip(), self.entry_total.get(), self.entry_concur.get(), 
-                self.entry_host.get(), self.entry_user.get(), self.entry_pass.get(), self.entry_db.get())
-        
-        self.update_loop() # Inicia atualização visual
-        threading.Thread(target=lambda: asyncio.run(self.run_stress_test(*args)), daemon=True).start()
 
 if __name__ == "__main__":
     app = StressTestApp()
